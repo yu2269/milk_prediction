@@ -1,0 +1,199 @@
+
+# Library
+```{r}
+# General used
+library(SIS)
+library(stringr)
+```
+# Processing functions
+```{r}
+reader_saver_function = function(data_base_name){
+  #_all: all microbes; _asv: asv data; _known: only known microbes
+  if (data_base_name == "all") {
+    reads_csv_name = "cow_all.csv"
+    saver = "all_microbes"
+  }else if (data_base_name == "asv"){
+    reads_csv_name = "cow_asv.csv"
+    saver = "asv"    
+  }else if (data_base_name == "known"){
+    reads_csv_name = "cow_known.csv"
+    saver = "known_microbes"    
+  }else if (data_base_name == "mrc"){
+    reads_csv_name = "cow_mrcl.csv"
+    saver = "mrc"
+  }else if (data_base_name == "m"){
+    reads_csv_name = "cow_m.csv"
+    saver = "m"    
+  }
+  return(list(reads_csv_name, saver))
+  
+}
+
+# reader_saver_function("all")[[1]]
+
+spliter_function = function(seed_index, candidate_data, startTot){
+  set.seed(seed_index)
+  spilter.data= candidate_data
+  spilter.data$CV_ID <- c(1:nrow(spilter.data))
+  n=nrow(spilter.data)
+  # 5-fold
+  lb.testing.dataset.size= floor(n/5)
+  ub.testing.dataset.size= ceiling(n/5)
+  ans = sample(c(1:nrow(candidate_data)), lb.testing.dataset.size,replace = F)
+  # print(ans)
+  # ans = unique(ans)
+  test = candidate_data[ans,]
+  train = candidate_data[-ans,]
+  train_data = train[,c(startTot:ncol(candidate_data))]
+  test_data= test[,c(startTot:ncol(candidate_data))]
+  
+  # Remove 0s 
+  zerosTrains = which(colSums(train_data) == 0)
+  zeroTests = which(colSums(test_data) == 0)
+  zeros = c()
+  if (length(zeroTests) > 0) {
+    zeros = append(zeros,names(zeroTests))
+  }
+  if (length(zerosTrains) > 0) {
+    zeros = append(zeros,names(zerosTrains))
+  } 
+  zeros = unique(zeros)
+  zeroTT = c()
+  if (length(zeros) > 0) {
+    for (i in c(1:ncol(candidate_data))) {
+      coN = colnames(candidate_data)[i]
+      if (coN %in% zeros) {
+        zeroTT = append(zeroTT, i)
+      }
+    }
+  }
+  if (length(zeroTT) > 0 ) {
+    # toDel = numerical_range[zeroTT]
+    test = candidate_data[ans,-zeroTT]
+    train = candidate_data[-ans,-zeroTT]
+    train_data = train[,c(startTot:ncol(train))]
+    test_data= test[,c(startTot:ncol(test))]
+    
+  }
+  
+  ## Scale and Center
+  scaled_train = scale(train_data,center = T,scale = T)
+  train[,c(startTot:ncol(train))] = scaled_train
+  
+  
+  scaled.new <- scale(test_data, attr(scaled_train, "scaled:center"), attr(scaled_train, "scaled:scale"))
+  test[,c(startTot:ncol(test))] = scaled.new  
+  return(list(train, test))
+}
+
+numerical_column_index_checker = function(my_data){
+  # my_data = candidate_data
+  
+  checker_not_finished = T
+  index_start = 2
+  
+  factor_variables = c("DIM", "Parity")
+  while (checker_not_finished) {
+    col_name = colnames(my_data)[index_start]
+    if (!(col_name%in%factor_variables)) {
+      checker_not_finished = F
+    }else{
+      index_start = index_start + 1
+    }
+    
+  }
+  return(index_start)
+  
+}  
+  
+```
+
+# Load data
+
+```{r}
+# Target (!!!need to change!!!): 2: milk yield; 3: milk fat; 4: milk protein; 5. milk lactose
+targetCol = 5
+# Read data (!!!need to change!!!). all: all microbes; asv: asv data; known: only known microbes; mrc; m
+data_choose = "all"
+
+# Set Working Directory (below dont need to change)
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+data_choose
+reader = reader_saver_function(data_choose)
+csv_name = reader[[1]]
+csv_name
+save_name = reader[[2]]
+save_name
+cow_milk_data = read.csv(csv_name)
+target_name = colnames(cow_milk_data)[targetCol]
+target_name
+## Start of numerical 
+startCol = 8
+# as.numeric()
+cow_milk_data$Parity = as.numeric(cow_milk_data$Parity)
+cow_milk_data$DIM = as.numeric(cow_milk_data$DIM)
+cow_milk_data$SCC = log10(cow_milk_data$SCC)
+
+cow_milk_data[startCol:ncol(cow_milk_data)] <- lapply(cow_milk_data[startCol:ncol(cow_milk_data)], as.numeric)
+# Remove outliers
+boxplot(cow_milk_data[,targetCol])
+Q <- quantile(cow_milk_data[,targetCol], probs=c(.25, .75), na.rm = FALSE)
+iqr <- IQR(cow_milk_data[,targetCol])
+up <-  Q[2]+2*iqr # Upper Range  
+low<- Q[1]-2*iqr # Lower Range
+# up
+# low
+row_outliers = which(cow_milk_data[,targetCol] > up | cow_milk_data[,targetCol] < low)
+asv_removed_outlier = cow_milk_data[-row_outliers,]
+cow_milk_data = asv_removed_outlier
+boxplot(cow_milk_data[,targetCol])
+
+# outcome
+outcome_target = cow_milk_data[, targetCol]
+
+```
+
+```{r}
+seed_fold_results = readRDS(paste(target_name,"_","MRCM_bwd_", save_name,".RData", sep = ""))
+mrcm_bwd_res = unlist(seed_fold_results[,"formula_bic"])
+mrcm_bwd_res
+mrcm_bwd_variables = unlist(seed_fold_results[,"total_number_varaibles"])
+seed_fold_results = readRDS(paste(target_name,"_","MRCM_fs_", save_name,".RData", sep = ""))
+mrcm_fs_res = unlist(seed_fold_results[,"formula_bic"])
+mrcm_fs_res
+mrcm_fs_variables = unlist(seed_fold_results[,"total_number_varaibles"])
+seed_fold_results = readRDS(paste(target_name,"_","MRCM_glmnet_", save_name,".RData", sep = ""))
+mrcm_glmnet_res = unlist(seed_fold_results[,"Refitt formula"])
+mrcm_glmnet_res
+mrcm_glmnet_variables = unlist(seed_fold_results[,"glmnet_variables"])
+
+seed_fold_results = readRDS(paste(target_name,"_","MRCM_rb_", save_name,".RData", sep = ""))
+mrcm_rb_res = unlist(seed_fold_results[,"Refitt formula"])
+mrcm_rb_res
+mrcm_rb_variables = unlist(seed_fold_results[,"rb_variables"])
+seed_fold_results = readRDS(paste(target_name,"_","MRCM_scad_", save_name,".RData", sep = ""))
+mrcm_scad_res = unlist(seed_fold_results[,"Refitt formula"])
+mrcm_scad_res
+mrcm_scad_variables = unlist(seed_fold_results[,"names"])
+as.character(mrcm_scad_res)
+df1 = data.frame(
+  "bwd_variables" = as.character(mrcm_bwd_variables), 
+  "bwd" = as.character(mrcm_bwd_res), 
+  
+  "fs_variables" = as.character(mrcm_fs_variables), 
+  "fs" = as.character(mrcm_fs_res), 
+  
+  "glmnet_variables" = as.character(mrcm_glmnet_variables),
+   "glmnet" = as.character(mrcm_glmnet_res),
+  
+  "rb_variables" = as.character(mrcm_rb_variables),
+  "rb" = as.character(mrcm_rb_res),
+  
+  "scad_variables" = as.character(mrcm_scad_variables),
+  "scad" = as.character(mrcm_scad_res)
+
+           )
+
+
+write.csv(t(df1), "serveral_runs.csv", col.names = F)
+```

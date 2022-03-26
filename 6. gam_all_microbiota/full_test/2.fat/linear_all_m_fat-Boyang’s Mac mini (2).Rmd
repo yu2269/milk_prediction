@@ -1,0 +1,782 @@
+# Library
+```{r}
+# General used
+library(SIS)
+library(stringr)
+```
+# Processing functions
+```{r}
+reader_saver_function = function(data_base_name){
+  #_all: all microbes; _asv: asv data; _known: only known microbes
+  if (data_base_name == "all") {
+    reads_csv_name = "cow_all.csv"
+    saver = "all_microbes"
+  }else if (data_base_name == "asv"){
+    reads_csv_name = "cow_asv.csv"
+    saver = "asv"    
+  }else if (data_base_name == "known"){
+    reads_csv_name = "cow_known.csv"
+    saver = "known_microbes"    
+  }else if (data_base_name == "mrc"){
+    reads_csv_name = "cow_mrcl.csv"
+    saver = "mrc"
+  }else if (data_base_name == "m"){
+    reads_csv_name = "cow_m.csv"
+    saver = "m"    
+  }
+  return(list(reads_csv_name, saver))
+  
+}
+
+# reader_saver_function("all")[[1]]
+
+spliter_function = function(seed_index, candidate_data, startTot){
+  set.seed(seed_index)
+  spilter.data= candidate_data
+  spilter.data$CV_ID <- c(1:nrow(spilter.data))
+  n=nrow(spilter.data)
+  # 5-fold
+  lb.testing.dataset.size= floor(n/5)
+  ub.testing.dataset.size= ceiling(n/5)
+  ans = sample(c(1:nrow(candidate_data)), lb.testing.dataset.size,replace = F)
+  # print(ans)
+  # ans = unique(ans)
+  test = candidate_data[ans,]
+  train = candidate_data[-ans,]
+  train_data = train[,c(startTot:ncol(candidate_data))]
+  test_data= test[,c(startTot:ncol(candidate_data))]
+  
+  # Remove 0s 
+  zerosTrains = which(colSums(train_data) == 0)
+  zeroTests = which(colSums(test_data) == 0)
+  zeros = c()
+  if (length(zeroTests) > 0) {
+    zeros = append(zeros,names(zeroTests))
+  }
+  if (length(zerosTrains) > 0) {
+    zeros = append(zeros,names(zerosTrains))
+  } 
+  zeros = unique(zeros)
+  zeroTT = c()
+  if (length(zeros) > 0) {
+    for (i in c(1:ncol(candidate_data))) {
+      coN = colnames(candidate_data)[i]
+      if (coN %in% zeros) {
+        zeroTT = append(zeroTT, i)
+      }
+    }
+  }
+  if (length(zeroTT) > 0 ) {
+    # toDel = numerical_range[zeroTT]
+    test = candidate_data[ans,-zeroTT]
+    train = candidate_data[-ans,-zeroTT]
+    train_data = train[,c(startTot:ncol(train))]
+    test_data= test[,c(startTot:ncol(test))]
+    
+  }
+  
+  ## Scale and Center
+  scaled_train = scale(train_data,center = T,scale = T)
+  train[,c(startTot:ncol(train))] = scaled_train
+  
+  
+  scaled.new <- scale(test_data, attr(scaled_train, "scaled:center"), attr(scaled_train, "scaled:scale"))
+  test[,c(startTot:ncol(test))] = scaled.new  
+  return(list(train, test))
+}
+
+numerical_column_index_checker = function(my_data){
+  # my_data = candidate_data
+  
+  checker_not_finished = T
+  index_start = 2
+  
+  factor_variables = c("DIM", "Parity")
+  while (checker_not_finished) {
+    col_name = colnames(my_data)[index_start]
+    if (!(col_name%in%factor_variables)) {
+      checker_not_finished = F
+    }else{
+      index_start = index_start + 1
+    }
+    
+  }
+  return(index_start)
+  
+}
+
+
+gam_formula_yield = function(variables_names, productions){
+  p_which = which(variables_names == "Parity")
+  d_which =which(variables_names == "DIM")
+  a_which =which(variables_names == "A.P.Ratio.")
+  if (productions == "Milk_lactose") {
+    
+  }else if (productions == "Milk_yield"){
+    df_parity = 3
+    df_dim = 2
+    df_ap = 2
+  }else if (productions == "Milk_fat"){
+    df_parity = 3
+    df_dim = 2
+    df_ap = 2    
+    
+  }else if (productions == "Milk_protein"){
+    df_parity = 2
+    df_dim = 2
+    df_ap = 2    
+    
+  }
+  
+  all_which = which(c(p_which, d_which, a_which)!=0)
+  
+  if (length(all_which)!=0) {
+    if (length(variables_names[-c(p_which, d_which, a_which)[all_which]]) == 0 ) {
+      variables = c()
+      if (length(p_which) != 0 ) {
+        
+        variables = append(variables, paste("ns(Parity, df=",df_parity,")",sep = "" ))
+      }
+      if (length(d_which) != 0 ) {
+        variables = append(variables, paste("ns(DIM, df=",df_dim,")",sep = "" ))
+      }
+      if (length(a_which) != 0 ) {
+        # paste("ns(A.P.Ratio., df=",df_dim,")",sep = "" )
+        variables = append(variables, paste("ns(A.P.Ratio., df=",df_ap,")",sep = "" ))
+      }      
+      formula_default = paste(variables, collapse=" + ")
+    }else{
+      formula_default = paste(variables_names[-c(p_which, d_which, a_which)[all_which]], collapse=" + ")
+      if (length(p_which) != 0 ) {
+        formula_default = paste(paste("ns(Parity, df=",df_parity,")+",sep = "" ), formula_default)
+      }
+      if (length(d_which) != 0 ) {
+        formula_default = paste(paste("ns(DIM, df=",df_dim,")+",sep = "" ), formula_default)
+      }
+      if (length(a_which) != 0 ) {
+        formula_default = paste(paste("ns(A.P.Ratio., df=",df_ap,")+",sep = "" ), formula_default)
+      }
+    }}else{
+      formula_default = paste(variables_names, collapse=" + ")
+    }
+  
+  return(paste(formula_default, sep = ""))
+  
+  
+}
+
+  
+```
+
+
+# Load data
+
+```{r}
+# Target (!!!need to change!!!): 2: milk yield; 3: milk fat; 4: milk protein; 5. milk lactose
+targetCol = 3
+# Read data (!!!need to change!!!). all: all microbes; asv: asv data; known: only known microbes; mrc; m
+data_choose = "all"
+
+# Set Working Directory (below dont need to change)
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+data_choose
+reader = reader_saver_function(data_choose)
+csv_name = reader[[1]]
+csv_name
+save_name = reader[[2]]
+save_name
+cow_milk_data = read.csv(csv_name)
+target_name = colnames(cow_milk_data)[targetCol]
+target_name
+## Start of numerical 
+startCol = 8
+# as.numeric()
+cow_milk_data$Parity = as.numeric(cow_milk_data$Parity)
+cow_milk_data$DIM = as.numeric(cow_milk_data$DIM)
+cow_milk_data$SCC = log10(cow_milk_data$SCC)
+
+cow_milk_data[startCol:ncol(cow_milk_data)] <- lapply(cow_milk_data[startCol:ncol(cow_milk_data)], as.numeric)
+# Remove outliers
+boxplot(cow_milk_data[,targetCol])
+Q <- quantile(cow_milk_data[,targetCol], probs=c(.25, .75), na.rm = FALSE)
+iqr <- IQR(cow_milk_data[,targetCol])
+up <-  Q[2]+2*iqr # Upper Range  
+low<- Q[1]-2*iqr # Lower Range
+# up
+# low
+row_outliers = which(cow_milk_data[,targetCol] > up | cow_milk_data[,targetCol] < low)
+asv_removed_outlier = cow_milk_data[-row_outliers,]
+cow_milk_data = asv_removed_outlier
+boxplot(cow_milk_data[,targetCol])
+
+# Seed parameter (Change to test different seeds)
+i_min = 1
+i_max = 200
+
+```
+
+
+# 0. SIS test
+```{r}
+# SIS test
+x = data.matrix(cow_milk_data[,c(6:16, 18:ncol(cow_milk_data))])
+sis1 = SIS(x = x,y = cow_milk_data[,targetCol])
+sis1$sis.ix0
+selectedFromSIS = c(6:16, 18:ncol(cow_milk_data))[sis1$sis.ix0]
+candidcate = append(c(targetCol),selectedFromSIS)
+# Candidate data
+candidate_data=cow_milk_data[,candidcate]
+## Column index of numerical variable (automatically; for scale and center use)
+startTot = numerical_column_index_checker(candidate_data)
+```
+
+# 1. BWD
+```{r, warning = F}
+seed_fold_results = list()
+for (i_seed in c(i_min:i_max)) {
+  ###  Testing 1:  
+  # i_seed = 1
+  ###  Testing 2:  
+  # i_seed = 2
+  ###  Testing 3:  
+  # i_seed = 3
+  # 1. Init
+  # Set seed
+  set.seed(i_seed)
+  seed_fold_result = list()
+  seed_fold_result[[1]] = i_seed
+  # 2. Split data by the fashion of the cross validation (return centered and scaled test and train data)
+  spliter_res = spliter_function(i_seed, candidate_data, startTot)
+  train = spliter_res[[1]]
+  test = spliter_res[[2]]
+  # 3. Init formula such as milk~.
+  target_variable = paste(colnames(cow_milk_data)[targetCol],"~.")
+  target_variable = as.formula(target_variable)
+  target_variable
+  #3. BWD
+  library(leaps)
+  ## 3.1 Set max total number of varaibles
+  total_number_variables = ncol(train) - 1
+  seed_fold_result[[2]] = total_number_variables
+  ## 3.2 use regsubsets for BWD
+  regfit.fwd=regsubsets(target_variable,train, nvmax = total_number_variables, intercept = T, method = "backward")
+  # regfit.fwd=regsubsets(target_variable,train, nvmax = total_number_variables, intercept = T, method = "exhaustive")
+  reg.fwd.summary=summary(regfit.fwd)
+  ## 3.3 select varialbes by BIC, ADJR2 and CP. 
+  fwd_bic = which.min(reg.fwd.summary$bic)
+  fwd_adjr2 = which.max(reg.fwd.summary$adjr2)
+  fwd_cp = which.min(reg.fwd.summary$cp)    
+  regsubsets_fw_bic = names(coef(regfit.fwd,fwd_bic))
+  regsubsets_fw_adjr2 = names(coef(regfit.fwd,fwd_adjr2))
+  regsubsets_fw_cp = names(coef(regfit.fwd,fwd_cp))
+  '%ni%' <- Negate('%in%')
+  regsubsets_fw_bic<-regsubsets_fw_bic[regsubsets_fw_bic %ni% '(Intercept)']
+  seed_fold_result[[2]] = paste(regsubsets_fw_bic, sep = "_",collapse = "_")
+  # regsubsets_fw_bic
+  regsubsets_fw_adjr2<-regsubsets_fw_adjr2[regsubsets_fw_adjr2 %ni% '(Intercept)']
+  # regsubsets_fw_adjr2
+  regsubsets_fw_cp<-regsubsets_fw_cp[regsubsets_fw_cp %ni% '(Intercept)']
+  # regsubsets_fw_cp
+
+  ## 3.4 build gam  formula
+  Formula_bic = formula(paste(paste(names(train)[1]," ~ ",sep = ""),gam_formula_yield(regsubsets_fw_bic, target_name)))
+  Formula_bic
+  Formula_adjr2 = formula(paste(paste(names(train)[1]," ~ ",sep = ""),gam_formula_yield(regsubsets_fw_adjr2, target_name)))
+  Formula_adjr2
+  Formula_cp = formula(paste(paste(names(train)[1]," ~ ",sep = ""),gam_formula_yield(regsubsets_fw_cp, target_name)))
+  Formula_cp
+  ### Record formula
+  seed_fold_result[[3]] = Formula_bic
+  seed_fold_result[[4]] = Formula_adjr2
+  seed_fold_result[[5]] = Formula_cp
+ 
+  # gam_formula_yield(regsubsets_fw_bic, target_name)
+  # gam_formula_yield(regsubsets_fw_adjr2, target_name)
+  # gam_formula_yield(regsubsets_fw_cp, target_name)
+  ## 3.5 use gam refit formula
+  library(mgcv)
+  library(splines)
+  lm_bic = gam(formula = Formula_bic, data = train)
+  lm_adjr2 = gam(formula = Formula_adjr2, data = train)
+  lm_cp = gam(formula = Formula_cp, data = train)
+  ## 3.6 make predictions
+  predicion_bic = predict(lm_bic, test[,-1])
+  predicion_adjr2 = predict(lm_adjr2, test[,-1])
+  predicion_cp = predict(lm_cp, test[,-1])
+  ## 3.7 set observation variable
+  observation = test[,1]
+  ## 3.8 record predictions and observations
+  seed_fold_result[[6]] = as.numeric(observation)
+  seed_fold_result[[7]] = as.numeric(predicion_bic)
+  seed_fold_result[[8]] = as.numeric(predicion_adjr2)
+  seed_fold_result[[9]] = as.numeric(predicion_cp)
+  # 4. combine the result of this i_seed into all records.  
+  seed_fold_results <<- rbind(seed_fold_results, seed_fold_result)
+}
+```
+## 1.2 Result and analysis
+```{r}
+# set column names for all records
+each_column = c("i_seed",
+                "total_number_varaibles",
+                "formula_bic",
+                "formula_adjr2",
+                "formula_cp",
+                "observations",
+                "predictions_bic",
+                "predictions_adjr2",
+                "predictions_cp")
+colnames(seed_fold_results) = each_column
+
+# Temp check MSE
+observations_all = seed_fold_results[,which(colnames(seed_fold_results) == "observations")]
+prediction_bic_all = seed_fold_results[,which(colnames(seed_fold_results) == "predictions_bic")]
+prediction_adjr2_all = seed_fold_results[,which(colnames(seed_fold_results) == "predictions_adjr2")]
+prediction_cp_all = seed_fold_results[,which(colnames(seed_fold_results) == "predictions_cp")]
+mse_bic = mean((as.numeric(unlist(prediction_bic_all)) - as.numeric(unlist(observations_all)))^2)
+mse_bic
+
+mse_bic = mean((as.numeric(unlist(prediction_adjr2_all)) - as.numeric(unlist(observations_all)))^2)
+mse_bic
+
+mse_bic = mean((as.numeric(unlist(prediction_cp_all)) - as.numeric(unlist(observations_all)))^2)
+mse_bic
+
+```
+
+```{r}
+saveRDS(seed_fold_results, paste(target_name,"_","MRCM_bwd_", save_name,".RData", sep = ""))
+```
+
+```{r}
+# Total rows of seed_fold_results should equals to 200 
+nrow(seed_fold_results)
+```
+
+# 2. FS
+```{r, warning = F}
+# Reset results
+seed_fold_results = list()
+for (i_seed in c(i_min:i_max)) {
+  ###  Testing 1:  
+  # i_seed = 1
+  ###  Testing 2:  
+  # i_seed = 2
+  ###  Testing 3:  
+  # i_seed = 3
+  # 1. Init
+
+  # Set seed
+  set.seed(i_seed)
+  seed_fold_result = list()
+  seed_fold_result[[1]] = i_seed
+  # 2. Split data by the fashion of the cross validation (return centered and scaled test and train data)
+  spliter_res = spliter_function(i_seed, candidate_data, startTot)
+  train = spliter_res[[1]]
+  test = spliter_res[[2]]
+  # 3. Init formula such as milk~.
+  target_variable = paste(colnames(cow_milk_data)[targetCol],"~.")
+  target_variable = as.formula(target_variable)
+  target_variable
+  #3. FS
+  library(leaps)
+  ## 3.1 Set max total number of varaibles
+  total_number_variables = ncol(train) - 1
+  
+  ## 3.2 use regsubsets for FS
+  regfit.fwd=regsubsets(target_variable,train, nvmax = total_number_variables, intercept = T, method = "forward")
+  # regfit.fwd=regsubsets(target_variable,train, nvmax = total_number_variables, intercept = T, method = "exhaustive")
+  reg.fwd.summary=summary(regfit.fwd)
+  ## 3.3 select varialbes by BIC, ADJR2 and CP. 
+  fwd_bic = which.min(reg.fwd.summary$bic)
+  fwd_adjr2 = which.max(reg.fwd.summary$adjr2)
+  fwd_cp = which.min(reg.fwd.summary$cp)    
+  regsubsets_fw_bic = names(coef(regfit.fwd,fwd_bic))
+  regsubsets_fw_adjr2 = names(coef(regfit.fwd,fwd_adjr2))
+  regsubsets_fw_cp = names(coef(regfit.fwd,fwd_cp))
+  '%ni%' <- Negate('%in%')
+  regsubsets_fw_bic<-regsubsets_fw_bic[regsubsets_fw_bic %ni% '(Intercept)']
+  seed_fold_result[[2]] = paste(regsubsets_fw_bic, sep = "_",collapse = "_")
+  # regsubsets_fw_bic
+  regsubsets_fw_adjr2<-regsubsets_fw_adjr2[regsubsets_fw_adjr2 %ni% '(Intercept)']
+  # regsubsets_fw_adjr2
+  regsubsets_fw_cp<-regsubsets_fw_cp[regsubsets_fw_cp %ni% '(Intercept)']
+  # regsubsets_fw_cp
+## 3.4 build gam  formula
+  Formula_bic = formula(paste(paste(names(train)[1]," ~ ",sep = ""),gam_formula_yield(regsubsets_fw_bic, target_name)))
+  Formula_bic
+  Formula_adjr2 = formula(paste(paste(names(train)[1]," ~ ",sep = ""),gam_formula_yield(regsubsets_fw_adjr2, target_name)))
+  Formula_adjr2
+  Formula_cp = formula(paste(paste(names(train)[1]," ~ ",sep = ""),gam_formula_yield(regsubsets_fw_cp, target_name)))
+  Formula_cp
+  ### Record formula
+  seed_fold_result[[3]] = Formula_bic
+  seed_fold_result[[4]] = Formula_adjr2
+  seed_fold_result[[5]] = Formula_cp
+ 
+  # gam_formula_yield(regsubsets_fw_bic, target_name)
+  # gam_formula_yield(regsubsets_fw_adjr2, target_name)
+  # gam_formula_yield(regsubsets_fw_cp, target_name)
+  ## 3.5 use gam refit formula
+  library(mgcv)
+  library(splines)
+  lm_bic = gam(formula = Formula_bic, data = train)
+  lm_adjr2 = gam(formula = Formula_adjr2, data = train)
+  lm_cp = gam(formula = Formula_cp, data = train)
+  ## 3.6 make predictions
+  predicion_bic = predict(lm_bic, test[,-1])
+  predicion_adjr2 = predict(lm_adjr2, test[,-1])
+  predicion_cp = predict(lm_cp, test[,-1])
+  ## 3.7 set observation variable
+  observation = test[,1]
+  ## 3.8 record predictions and observations
+  seed_fold_result[[6]] = as.numeric(observation)
+  seed_fold_result[[7]] = as.numeric(predicion_bic)
+  seed_fold_result[[8]] = as.numeric(predicion_adjr2)
+  seed_fold_result[[9]] = as.numeric(predicion_cp)
+  # 4. combine the result of this i_seed into all records.  
+  seed_fold_results <<- rbind(seed_fold_results, seed_fold_result)
+}
+```
+## 1.2 Result and analysis
+```{r}
+# set column names for all records
+each_column = c("i_seed",
+                "total_number_varaibles",
+                "formula_bic",
+                "formula_variables_adjr2",
+                "formula_variables_cp",
+                "observations",
+                "predictions_bic",
+                "predictions_adjr2",
+                "predictions_cp")
+colnames(seed_fold_results) = each_column
+
+# Temp check MSE
+observations_all = seed_fold_results[,which(colnames(seed_fold_results) == "observations")]
+prediction_bic_all = seed_fold_results[,which(colnames(seed_fold_results) == "predictions_bic")]
+prediction_adjr2_all = seed_fold_results[,which(colnames(seed_fold_results) == "predictions_adjr2")]
+prediction_cp_all = seed_fold_results[,which(colnames(seed_fold_results) == "predictions_cp")]
+mse_bic = mean((as.numeric(unlist(prediction_bic_all)) - as.numeric(unlist(observations_all)))^2)
+mse_bic
+
+mse_bic = mean((as.numeric(unlist(prediction_adjr2_all)) - as.numeric(unlist(observations_all)))^2)
+mse_bic
+
+mse_bic = mean((as.numeric(unlist(prediction_cp_all)) - as.numeric(unlist(observations_all)))^2)
+mse_bic
+
+```
+
+```{r}
+saveRDS(seed_fold_results, paste(target_name,"_","MRCM_fs_", save_name,".RData", sep = ""))
+```
+
+```{r}
+# Total rows of seed_fold_results should equals to 200 
+nrow(seed_fold_results)
+```
+
+
+
+
+# 3. glmnet
+```{r, warning = F}
+# Reset results
+seed_fold_results = list()
+for (i_seed in c(i_min:i_max)) {
+  ###  Testing 1:  
+  # i_seed = 1
+  ###  Testing 2:  
+  # i_seed = 2
+  ###  Testing 3:  
+  # i_seed = 3
+  # 1. Init
+
+  # Set seed
+  set.seed(i_seed)
+  seed_fold_result = list()
+  seed_fold_result[[1]] = i_seed
+  # 2. Split data by the fashion of the cross validation (return centered and scaled test and train data)
+  spliter_res = spliter_function(i_seed, candidate_data, startTot)
+  train = spliter_res[[1]]
+  test = spliter_res[[2]]
+  # 3. Init formula such as milk~.
+  target_variable = paste(colnames(cow_milk_data)[targetCol],"~.")
+  target_variable = as.formula(target_variable)
+  target_variable
+  #3. FS
+  library(glmnet)
+  x <- data.matrix(train[, c(2:ncol(train))])
+  y=as.matrix(train[,1])
+  #perform k-fold cross-validation to find optimal lambda value
+  # lambda = seq(100, 0, -0.01)
+  cv_model <- cv.glmnet(x, y=y, alpha = 1, intercept = T)
+  
+  #find optimal lambda value that minimizes test MSE
+  best_lambda <- cv_model$lambda.min
+  best_lambda
+  # plot(cv_model)
+  # print(best_lambda)
+  c<-coef(cv_model,s='lambda.min',exact=TRUE)
+  # seed_fold_result[[2]] = best_lambda
+  inds<-which(c!=0)
+  glmnet_variables<-row.names(c)[inds]
+  '%ni%' <- Negate('%in%')
+  glmnet_variables<-glmnet_variables[glmnet_variables %ni% '(Intercept)']
+  glmnet_variables_all = significant_variables_names = glmnet_variables
+  glmnet_variables_all
+  seed_fold_result[[2]] = paste(glmnet_variables_all, sep = "_",collapse = "_")
+  seed_fold_result[[3]] = glmnet_variables
+  # Formula_glmnet gam
+  Formula_glmnet = FormulaNew = formula(paste(paste(names(train)[1]," ~ ",sep = ""),gam_formula_yield(glmnet_variables, target_name)))
+  
+  FormulaNew
+  library(mgcv)
+  library(splines)
+  seed_fold_result[[4]] = Formula_glmnet
+  glmModel = gam(formula = Formula_glmnet,data = train)
+  summary_train_model = summary(glmModel)
+  summary_train_coef = summary_train_model$coefficients
+  #View(summary_train_coef)
+  seed_fold_result[[5]] = summary_train_coef
+  prediction = try(predict(glmModel, newdata = test))
+  observation = test[,1]
+  seed_fold_result[[6]] = observation
+  seed_fold_result[[7]] = prediction
+
+  seed_fold_results <<- rbind(seed_fold_results, seed_fold_result)
+}
+```
+## 1.2 Result and analysis
+```{r}
+# set column names for all records
+each_column = c("i_seed",
+                "glmnet_variables",
+                "glmnet selected variables",
+                "Refitt formula",
+                "Summary of refitted model",
+                "observations",
+                "predictions")
+colnames(seed_fold_results) = each_column
+
+```
+
+```{r}
+saveRDS(seed_fold_results, paste(target_name,"_","MRCM_glmnet_", save_name,".RData", sep = ""))
+```
+
+```{r}
+# Total rows of seed_fold_results should equals to 200 
+nrow(seed_fold_results)
+```
+
+
+
+
+
+
+# 4. rf boosting
+```{r, warning = F}
+# Reset results
+seed_fold_results = list()
+for (i_seed in c(i_min:i_max)) {
+  ###  Testing 1:  
+  # i_seed = 1
+  ###  Testing 2:  
+  # i_seed = 2
+  ###  Testing 3:  
+  # i_seed = 3
+  # 1. Init
+
+  # Set seed
+  set.seed(i_seed)
+  seed_fold_result = list()
+  seed_fold_result[[1]] = i_seed
+  # 2. Split data by the fashion of the cross validation (return centered and scaled test and train data)
+  spliter_res = spliter_function(i_seed, candidate_data, startTot)
+  train = spliter_res[[1]]
+  test = spliter_res[[2]]
+  # 3. Init formula such as milk~.
+  target_variable = paste(colnames(cow_milk_data)[targetCol],"~.")
+  target_variable = as.formula(target_variable)
+  target_variable
+  #3. RDF
+  name.variables.cow <- names(train)[-c(1)]
+  Formula_rdf_gbm<- formula(paste(paste(names(train)[1]," ~",sep = ""),paste(name.variables.cow, collapse=" + ")))
+  Formula_rdf_gbm
+  library(randomForest)
+  rdf_model <- randomForest(Formula_rdf_gbm, data=train, importance=TRUE,proximity=TRUE)
+  rdf_variables_selected = rownames(importance(rdf_model)[order(importance(rdf_model)[,1],decreasing = T),][c(1:5),])
+  # 4. Boosting
+  library(gbm)
+  # Default gbm
+  gbm1 <- gbm(Formula_rdf_gbm, data = train,
+              distribution = "gaussian",
+              shrinkage = 0.1,
+              interaction.depth = 3, 
+              bag.fraction = 0.5, 
+              train.fraction = 0.5, 
+              n.minobsinnode = 10, 
+              cv.folds = 5, 
+              keep.data = TRUE, 
+              verbose = FALSE, 
+              n.cores = 5)
+  # gbm1
+  sgbm = summary.gbm(gbm1, plotit = F)
+  gbm_variables = rownames(sgbm[order(sgbm$rel.inf, decreasing = T),])[c(1:5)]
+  rb_variables = unique(append(rdf_variables_selected,gbm_variables))
+  # rb_variables
+  rdf_boosting_variables = rb_variables
+  seed_fold_result[[2]] = paste(rb_variables, sep = "_",collapse = "_")
+  Formula_rdf_boosting<- formula(paste(paste(names(train)[1]," ~ ",sep = ""),gam_formula_yield(rdf_boosting_variables, target_name)))
+  Formula_rdf_boosting
+  # seed_fold_result[[2]] = rb_variables
+  # Need to record this
+  seed_fold_result[[3]] = rdf_boosting_variables
+  seed_fold_result[[4]] = Formula_rdf_boosting
+  library(mgcv)
+  library(splines)
+  glmModel = gam(formula = Formula_rdf_boosting,data = train)
+  summary_train_model = summary(glmModel)
+  summary_train_coef = summary_train_model$coefficients
+  #View(summary_train_coef)
+  seed_fold_result[[5]] = summary_train_coef
+  prediction = try(predict(glmModel, newdata = test))
+  observation = test[,1]
+  # RB
+  seed_fold_result[[6]] = observation
+  seed_fold_result[[7]] = prediction
+  # RDF 
+  prediction_rf = predict(rdf_model, newdata = test)
+  observation_rf = test[,1]
+  seed_fold_result[[8]] = observation_rf
+  seed_fold_result[[9]] = prediction_rf
+  # Boosting 
+  prediction_boosting = predict(gbm1, newdata = test)
+  observation_boosting = test[,1]
+  seed_fold_result[[10]] = observation_boosting
+  seed_fold_result[[11]] = prediction_boosting
+  
+
+  seed_fold_results <<- rbind(seed_fold_results, seed_fold_result)
+}
+```
+## 1.2 Result and analysis
+```{r}
+# set column names for all records
+each_column = c("i_seed",
+                "rb_variables",
+                "rdf_boosting_variables",
+                "Refitt formula",
+                "Summary of refitted model",
+                "observations",
+                "predictions",
+                "observation_rf",
+                "prediction_rf",
+                "observation_boosting",
+                "prediction_boosting")
+colnames(seed_fold_results) = each_column
+
+```
+
+```{r}
+saveRDS(seed_fold_results, paste(target_name,"_","MRCM_rb_", save_name,".RData", sep = ""))
+```
+
+```{r}
+# Total rows of seed_fold_results should equals to 200 
+nrow(seed_fold_results)
+```
+
+
+
+
+
+# 5. scad
+```{r, warning = F}
+# Reset results
+seed_fold_results = list()
+for (i_seed in c(i_min:i_max)) {
+  ###  Testing 1:  
+  # i_seed = 1
+  ###  Testing 2:  
+  # i_seed = 2
+  ###  Testing 3:  
+  # i_seed = 3
+  # 1. Init
+
+  # Set seed
+  set.seed(i_seed)
+  seed_fold_result = list()
+  seed_fold_result[[1]] = i_seed
+  # 2. Split data by the fashion of the cross validation (return centered and scaled test and train data)
+  spliter_res = spliter_function(i_seed, candidate_data, startTot)
+  train = spliter_res[[1]]
+  test = spliter_res[[2]]
+  # 3. SCAD
+  library(ncvreg)    
+  x <- data.matrix(train[, c(2:ncol(train))])
+  y=as.matrix(train[,1])
+  cv.fit <- cv.ncvreg(x, y, 
+                      penalty=c("SCAD"),
+                      seed = i_seed,
+                      returnY = T)
+  # plot(fit, main=expression(paste(gamma,"=",3)))
+  fit = cv.fit$fit
+  # plot(cv.fit$fit)
+  beta <- fit$beta[,cv.fit$min]
+  # names(beta)
+  # which(beta != 0 )
+  # seed_fold_result[[2]] = names(beta)
+  scadNames = names(which(beta != 0 ))
+  scadNames = scad_variables_all = scadNames[-which(scadNames == "(Intercept)")]  
+  seed_fold_result[[2]] = paste(scadNames, sep = "_",collapse = "_")
+  FormulaSCAD = formula(paste(paste(names(train)[1]," ~ ",sep = ""),gam_formula_yield(scadNames, target_name)))
+  FormulaSCAD
+  # Need to record this
+  seed_fold_result[[3]] = scadNames
+  seed_fold_result[[4]] = FormulaSCAD
+  library(mgcv)
+  library(splines)
+  glmModel = gam(formula = FormulaSCAD,data = train)
+  summary_train_model = summary(glmModel)
+  summary_train_coef = summary_train_model$coefficients
+  #View(summary_train_coef)
+  seed_fold_result[[5]] = summary_train_coef
+  prediction = try(predict(glmModel, newdata = test))
+  observation = test[,1]
+  error <- prediction-observation
+  seed_fold_result[[6]] = observation
+  seed_fold_result[[7]] = prediction
+
+  
+
+  seed_fold_results <<- rbind(seed_fold_results, seed_fold_result)
+}
+```
+## 1.2 Result and analysis
+```{r}
+# set column names for all records
+each_column = c("i_seed",
+                "names",
+                "scadNames",
+                "Refitt formula",
+                "Summary of refitted model",
+                "observations",
+                "predictions")
+colnames(seed_fold_results) = each_column
+
+```
+
+```{r}
+saveRDS(seed_fold_results, paste(target_name,"_","MRCM_scad_", save_name,".RData", sep = ""))
+```
+
+```{r}
+# Total rows of seed_fold_results should equals to 200 
+nrow(seed_fold_results)
+```
+
+
+
